@@ -1,0 +1,28 @@
+# ── Compiled output ───────────────────────────────────────────────────────────
+# Remove the next line if you want to commit dist/ for clone-and-run convenience.
+# Keep it if you prefer consumers to run `npm run build` themselves.
+dist/
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Environment / secrets ──────────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+*.p12
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── OS / editor noise ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Local AI / IDE config (contains machine-specific paths) ───────────────────
+.claude/settings.local.json
+.cursor/
