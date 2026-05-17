@@ -170,10 +170,20 @@ Replace `/absolute/path/to/wso2-bi-kafka-mcp-server` with the actual path on you
 }
 ```
 
-Or add it interactively from within a Claude Code session:
+Or add it directly from the terminal using the Claude Code CLI:
 
+```bash
+# Personal (available in all your projects — recommended for this MCP)
+claude mcp add --transport stdio kafka-bi -- node /absolute/path/to/wso2-bi-kafka-mcp-server/dist/index.js
+
+# Project-level (shared with team via .mcp.json at the repo root)
+claude mcp add --transport stdio --scope project kafka-bi -- node /absolute/path/to/wso2-bi-kafka-mcp-server/dist/index.js
 ```
-/mcp add kafka-bi node /absolute/path/to/wso2-bi-kafka-mcp-server/dist/index.js
+
+Verify it was added:
+
+```bash
+claude mcp list
 ```
 
 ---
