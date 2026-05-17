@@ -103,7 +103,6 @@ listener kafka:Listener orderListener = new (kafkaBootstrapServers, {
 function mainBal(): string {
   return `\
 import ballerina/log;
-import ballerina/time;
 import ballerinax/kafka;
 
 // Kafka consumer service — processes incoming orders and publishes results.
@@ -115,17 +114,17 @@ service kafka:Service on orderListener {
         foreach kafka:AnydataConsumerRecord msg in messages {
             do {
                 // 1. Deserialise bytes → string → OrderEvent
-                byte[] rawBytes  = check msg.value.ensureType(byte[]);
-                string rawStr    = check string:fromBytes(rawBytes);
-                OrderEvent order = check rawStr.fromJsonStringWithType();
+                byte[] rawBytes      = <byte[]>msg.value;
+                string rawStr        = check string:fromBytes(rawBytes);
+                OrderEvent orderEvt  = check rawStr.fromJsonStringWithType();
 
                 log:printInfo("[Consumer] Received order",
-                    orderId   = order.orderId,
-                    eventType = order.eventType,
-                    amount    = order.amount);
+                    orderId   = orderEvt.orderId,
+                    eventType = orderEvt.eventType,
+                    amount    = orderEvt.amount);
 
                 // 2. Process the order
-                ProcessedOrder processed = check processOrder(order);
+                ProcessedOrder processed = check processOrder(orderEvt);
 
                 // 3. Publish result to output topic
                 check orderProducer->send({
@@ -140,7 +139,7 @@ service kafka:Service on orderListener {
 
             } on fail error e {
                 log:printError("[Consumer] Failed to process message",
-                    err = e, offset = msg.offset, partition = msg.partition);
+                    errMsg = e.message(), offset = msg.offset);
             }
         }
 
@@ -156,11 +155,11 @@ function functionsBal(): string {
 import ballerina/time;
 
 // Business logic — extend this function with your real processing.
-public isolated function processOrder(OrderEvent order) returns ProcessedOrder|error {
+public isolated function processOrder(OrderEvent orderEvt) returns ProcessedOrder|error {
     return {
-        orderId:     order.orderId,
+        orderId:     orderEvt.orderId,
         status:      "PROCESSED",
-        amount:      order.amount,
+        amount:      orderEvt.amount,
         processedAt: time:utcToString(time:utcNow())
     };
 }
@@ -487,7 +486,7 @@ export async function runBiDemo(args: {
 
   const runResult = await docker.run(
     "bal",
-    ["run", "-C", `kafkaGroupId=${demoGroupId}`],
+    ["run", "--", `-CkafkaGroupId=${demoGroupId}`],
     projectPath,
     25_000,
   );
