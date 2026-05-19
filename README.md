@@ -2,7 +2,7 @@
 
 MCP server that lets AI assistants set up, run, and test a local **Apache Kafka + WSO2 Ballerina Integrator** environment — one command to go from zero to a working producer/consumer flow.
 
-Gives AI assistants **15 tools** to set up Kafka, manage topics, produce and consume messages, build and run Ballerina BI projects, and generate sample code — without exposing a shell command interface.
+Gives AI assistants **36 tools** to set up Kafka, manage topics, produce and consume messages, build and run Ballerina BI projects, generate sample code, run full **erroneous-flow test suites**, and deploy **multi-replica consumer groups** both locally and as Docker containers — without exposing a shell command interface.
 
 ---
 
@@ -52,7 +52,7 @@ This compiles TypeScript to `dist/`. The entry point is `dist/index.js`.
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | node dist/index.js
 ```
 
-You should see a JSON response listing all 15 tools.
+You should see a JSON response listing all 35 tools.
 
 ---
 
@@ -132,59 +132,61 @@ Replace `/absolute/path/to/wso2-bi-kafka-mcp-server` with the actual path on you
    }
    ```
 
-3. Restart Claude Desktop. The 15 tools will appear automatically.
+3. Restart Claude Desktop. The 35 tools will appear automatically.
 
 ---
 
 ### Claude Code (CLI)
 
-**Project-level** (`.claude/settings.json` in your working directory):
+Claude Code uses **dedicated MCP config files**, not `settings.json`. MCP servers never go in `settings.json`.
 
-```json
-{
-  "mcpServers": {
-    "kafka-bi": {
-      "command": "node",
-      "args": [
-        "/absolute/path/to/wso2-bi-kafka-mcp-server/dist/index.js"
-      ],
-      "type": "stdio"
-    }
-  }
-}
-```
-
-**User-level** (`~/.claude/settings.json` — available in every project):
-
-```json
-{
-  "mcpServers": {
-    "kafka-bi": {
-      "command": "node",
-      "args": [
-        "/absolute/path/to/wso2-bi-kafka-mcp-server/dist/index.js"
-      ],
-      "type": "stdio"
-    }
-  }
-}
-```
-
-Or add it directly from the terminal using the Claude Code CLI:
+#### Recommended — CLI commands (writes the correct file automatically)
 
 ```bash
-# Personal (available in all your projects — recommended for this MCP)
-claude mcp add --transport stdio kafka-bi -- node /absolute/path/to/wso2-bi-kafka-mcp-server/dist/index.js
+# User scope — available in all your projects (recommended for personal use)
+claude mcp add --scope user --transport stdio kafka-bi -- node /absolute/path/to/wso2-bi-kafka-mcp-server/dist/index.js
 
-# Project-level (shared with team via .mcp.json at the repo root)
-claude mcp add --transport stdio --scope project kafka-bi -- node /absolute/path/to/wso2-bi-kafka-mcp-server/dist/index.js
+# Project scope — shared with your team via .mcp.json at the repo root
+claude mcp add --scope project --transport stdio kafka-bi -- node /absolute/path/to/wso2-bi-kafka-mcp-server/dist/index.js
 ```
 
-Verify it was added:
+Verify:
 
 ```bash
 claude mcp list
 ```
+
+#### Manual — edit the config files directly
+
+**User scope** (`~/.claude.json` — available in all your projects):
+
+```json
+{
+  "mcpServers": {
+    "kafka-bi": {
+      "command": "node",
+      "args": ["/absolute/path/to/wso2-bi-kafka-mcp-server/dist/index.js"],
+      "type": "stdio"
+    }
+  }
+}
+```
+
+**Project scope** (`.mcp.json` at your **project root** — commit this to share with your team):
+
+```json
+{
+  "mcpServers": {
+    "kafka-bi": {
+      "command": "node",
+      "args": ["/absolute/path/to/wso2-bi-kafka-mcp-server/dist/index.js"],
+      "type": "stdio"
+    }
+  }
+}
+```
+
+> **Note:** `~/.claude/.mcp.json` is not a valid path. User-scope MCP config lives in `~/.claude.json` (top-level key). Project-scope config lives in `.mcp.json` at the project root, not inside `.claude/`.
 
 ---
 
@@ -310,6 +312,32 @@ The server uses **stdio transport** — the standard for local MCP servers.
 
 Once configured, interact with the tools through your AI assistant using natural language. The assistant will call the correct tools automatically.
 
+### Choosing a deployment mode
+
+Before running setup, call `choose_deployment_mode` to get a guided comparison of all three ways to run the Ballerina Kafka integration:
+
+```
+"Help me choose a deployment mode"
+"How should I deploy the Ballerina Kafka integration?"
+"What's the difference between standalone and multi-replica?"
+```
+
+The tool presents a side-by-side comparison of the three modes with trade-off notes and decision questions. Once the user picks a mode, call it again with the chosen mode to get an exact step-by-step tool sequence:
+
+```
+choose_deployment_mode { mode: "standalone" }
+choose_deployment_mode { mode: "local-replicas" }
+choose_deployment_mode { mode: "containerized" }
+```
+
+| Mode | Best for | Key trade-off |
+|------|----------|---------------|
+| `standalone` | First-time setup, development, demos | Single consumer — all partitions on one instance |
+| `local-replicas` | Testing consumer-group behaviour | In-memory — replicas lost on MCP server restart |
+| `containerized` | Integration testing, pre-production | Requires a one-time Docker image build (~2 min) |
+
+---
+
 ### Quick start (one command)
 
 The fastest way to get everything running:
@@ -385,6 +413,17 @@ Or manually, step by step:
 
 ## Tool reference
 
+### `choose_deployment_mode`
+Interactive wizard that helps the user pick a deployment mode. Call with **no arguments** to see a side-by-side comparison of all three modes. Call with `mode` to get the exact step-by-step tool sequence.
+
+| Argument | Type | Values | Description |
+|----------|------|--------|-------------|
+| `mode` | string | `standalone` \| `local-replicas` \| `containerized` | Omit to see the comparison; provide to get the mode-specific guide |
+
+The AI assistant is instructed to call this tool automatically at the start of any Kafka + BI setup conversation unless the user has already stated their preferred mode.
+
+---
+
 ### `setup_kafka_and_bi`
 One-command setup: starts Kafka, creates demo topics, generates and compiles a Ballerina BI project with consumer + producer flows. Detects the best project location automatically (see [Default project paths](#default-project-paths-auto-detected) above).
 
@@ -402,6 +441,7 @@ End-to-end demo: produces a test `OrderEvent` → starts the BI listener → ver
 |----------|------|---------|-------------|
 | `projectPath` | string | auto-detected | BI project directory (same smart-path logic as setup) |
 | `kafkaComposePath` | string | bundled | Kafka Compose directory |
+| `includeNegativeTests` | boolean | `false` | After the success demo, also run invalid-JSON and schema-mismatch error-flow tests |
 
 ---
 
@@ -519,7 +559,7 @@ Starts the BI project with `bal run`. Captures 15 seconds of startup output. Nev
 ---
 
 ### `inspect_bi_kafka_config`
-Reads and displays all `configurable` declarations from `.bal` files and active `Config.toml` overrides. Secrets are masked. Read-only.
+Reads and displays all `configurable` declarations from `.bal` files and active `Config.toml` overrides. Secrets are masked. Read-only. Also shows a **Commit Behaviour** section (auto-commit flag, manual commit position relative to the foreach loop) and a **Dead-Letter Queue (DLQ)** section.
 
 | Argument | Type | Default |
 |----------|------|---------|
@@ -543,29 +583,348 @@ Generated files: `Ballerina.toml`, `config.bal`, `types.bal`, `connections.bal`,
 
 ---
 
+## Erroneous flow testing
+
+The server includes 10 additional tools for simulating failures, inspecting error-handling behaviour, and verifying recovery — all non-destructive and safe to run against your real project.
+
+### `run_error_flow_suite`
+Orchestrates all error-flow sub-tests in sequence and returns a structured report. The quickest way to run a full error-flow pass.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `projectPath` | string | auto-detected | BI project directory |
+| `inputTopic` | string | `bi.orders.in` | Input topic |
+| `outputTopic` | string | `bi.orders.out` | Output topic |
+| `kafkaComposePath` | string | bundled | |
+| `includeManualCommitRedeliveryTest` | boolean | `false` | Include the commit/re-delivery analysis test |
+| `includeDlqCheck` | boolean | `false` | Include the DLQ inspection test |
+| `includeKafkaUnavailableTest` | boolean | `false` | Temporarily stop Kafka and observe behaviour (**runs last**) |
+| `timeoutSeconds` | number | `30` | Per-test capture window |
+
+---
+
+### `trigger_invalid_json_error`
+Produces a malformed JSON payload (`{ "orderId": "ORD-ERR-001", "amount": }`) to the input topic. Explains the expected Ballerina parse error and the log-and-continue commit behaviour.
+
+| Argument | Type | Default |
+|----------|------|---------|
+| `topicName` | string | `bi.orders.in` |
+| `kafkaComposePath` | string | bundled |
+| `projectPath` | string | auto-detected |
+
+---
+
+### `trigger_schema_mismatch_error`
+Produces a structurally valid but schema-incompatible payload. Use `variant` to choose between a missing-field payload and a wrong-type payload (e.g. `amount: "not-a-number"`).
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `topicName` | string | `bi.orders.in` | |
+| `variant` | `missing-field` \| `wrong-type` | `missing-field` | Which schema violation to inject |
+| `kafkaComposePath` | string | bundled | |
+| `projectPath` | string | auto-detected | |
+
+---
+
+### `trigger_business_rule_error`
+Produces a valid-JSON, valid-schema payload with a negative `amount` (-100.0). Inspects `functions.bal` for amount-validation logic. If none is found, the message is processed successfully and the tool reports a `warning` with a recommendation to add a guard.
+
+| Argument | Type | Default |
+|----------|------|---------|
+| `topicName` | string | `bi.orders.in` |
+| `kafkaComposePath` | string | bundled |
+| `projectPath` | string | auto-detected |
+
+---
+
+### `test_missing_topic_error`
+Generates a unique throwaway topic name and attempts to describe it, produce a message, then describe it again. Reports how `KAFKA_AUTO_CREATE_TOPICS_ENABLE=true` (the bundled Compose default) means a missing topic is created rather than causing an error, and explains how to reproduce a true missing-topic failure.
+
+| Argument | Type | Default |
+|----------|------|---------|
+| `kafkaComposePath` | string | bundled |
+
+---
+
+### `test_consumer_not_running_flow`
+Produces a valid order to the input topic without starting the BI listener. Verifies the output topic stays empty (timeout as expected), then confirms the input message is retained by Kafka's log-retention policy — ready to be consumed when the listener starts next.
+
+| Argument | Type | Default |
+|----------|------|---------|
+| `topicName` | string | `bi.orders.in` |
+| `kafkaComposePath` | string | bundled |
+
+---
+
+### `test_manual_commit_redelivery`
+Inspects the BI project source with static analysis (`detectCommitBehavior`) to determine whether the manual `caller->commit()` call is inside or outside the foreach loop. Runs the BI listener with a short capture window, observes whether failed messages cause the commit to be skipped, and reports the actual re-delivery behaviour. Optionally re-runs with the same group ID to confirm.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `projectPath` | string | auto-detected | |
+| `kafkaComposePath` | string | bundled | |
+| `includeRestart` | boolean | `false` | Re-run with the same group ID to verify no re-delivery |
+
+---
+
+### `check_dlq`
+Scans `.bal` sources for dead-letter queue patterns (`dlqTopic`, `deadLetterTopic`, `errorTopic` configurables + matching producer send calls). If a DLQ is found, consumes up to 10 messages from it. If not found, returns actionable guidance for adding DLQ support.
+
+| Argument | Type | Default |
+|----------|------|---------|
+| `projectPath` | string | auto-detected |
+| `kafkaComposePath` | string | bundled |
+
+---
+
+### `show_error_diagnostics`
+Pulls recent Kafka broker logs, optionally reads BI runtime log files from the project's `target/` directory, applies known-pattern highlighting (❌ for errors, ⚠️ for warnings), and returns a pattern-occurrence summary. Sensitive values are masked.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `kafkaComposePath` | string | bundled | |
+| `projectPath` | string | auto-detected | |
+| `lines` | number | `100` | Lines of Kafka logs to retrieve |
+
+---
+
+### `generate_error_flow_report`
+Formats a structured report from an array of `ErrorFlowResult` objects. Includes a summary table (test name / status / topic / recommendation) and a per-test detail section. Returns a final verdict and confirms no project files were modified.
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `results` | `ErrorFlowResult[]` | **required** — results array from `run_error_flow_suite` or individual test tools |
+| `title` | string | Optional report title |
+
+---
+
+### Example prompts for error-flow testing
+
+```
+"Run the full error-flow test suite on my BI project."
+
+"Inject a malformed JSON payload into the orders topic and show me what Ballerina does."
+
+"Produce a message with a missing required field and check the schema mismatch error."
+
+"Send an order with a negative amount and see if the BI project validates it."
+
+"What happens when I produce to a topic that doesn't exist?"
+
+"Produce a message to the input topic but don't start the BI listener — what happens to the message?"
+
+"Check whether the BI project re-delivers failed messages after a restart."
+
+"Does the BI project have a dead-letter queue?"
+
+"Highlight any errors in the Kafka broker logs."
+
+"Generate a detailed report of the last error-flow test run."
+```
+
+---
+
+## Multi-replica deployment
+
+The server supports two deployment modes for running multiple Ballerina Kafka consumer instances against a single Kafka broker.
+
+| | Local process replicas | Containerized replicas |
+|---|---|---|
+| **How it works** | Multiple `bal run` processes on the host, tracked in-memory | N Docker containers, each running the compiled JAR |
+| **Kafka bootstrap** | `localhost:9092` | `kafka:9093` (internal Docker network) |
+| **Lifecycle** | Tied to the MCP server session | Independent — survive MCP server restarts |
+| **Prerequisites** | Compiled project (`validate_bi_project`) | Built Docker image (`build_bi_docker_image`) |
+| **Partition balance** | Kafka auto-rebalances on each start/stop | Kafka auto-rebalances on each scale operation |
+| **Best for** | Quick local testing of consumer-group behaviour | Production-like multi-replica validation |
+
+### Quick start — local process replicas
+
+```
+1. validate_bi_project                  → ensure the project is compiled
+2. start_bi_replica { groupId: "order-processor" }   → start replica 1
+3. start_bi_replica { groupId: "order-processor" }   → start replica 2
+4. list_bi_replicas                     → see both running
+5. inspect_consumer_group { groupId: "order-processor" }  → see partition assignment
+6. stop_all_bi_replicas                 → clean up
+```
+
+### Quick start — containerized replicas
+
+```
+1. build_bi_docker_image                → compile + build Docker image
+2. generate_bi_docker_compose           → create docker-compose.bi.yml
+3. start_bi_replicas_containerized { replicas: 3 }   → start 3 containers
+4. inspect_consumer_group { groupId: "order-processor" }  → see partition assignment
+5. scale_bi_replicas { replicas: 2 }    → scale down to 2
+6. stop_bi_replicas_containerized       → clean up
+```
+
+### `start_bi_replica`
+Start a Ballerina BI Kafka listener as a persistent background process. Multiple replicas with the same `groupId` form a Kafka consumer group — Kafka distributes partitions across them automatically.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `projectPath` | string | auto-detected | BI project directory |
+| `groupId` | string | `order-processor` | Consumer group ID (shared by all replicas) |
+| `instanceId` | string | auto-generated | Unique name for this replica |
+| `configOverrides` | object | `{}` | Extra `-Ckey=value` overrides (e.g. `{ kafkaTopic: "payments" }`) |
+
+---
+
+### `stop_bi_replica`
+Stop a specific local replica by `instanceId`. Sends SIGTERM then SIGKILL if needed.
+
+| Argument | Type | Required |
+|----------|------|---------|
+| `instanceId` | string | **required** |
+
+---
+
+### `stop_all_bi_replicas`
+Stop all running local replicas. Optionally filter by project path.
+
+| Argument | Type | Default |
+|----------|------|---------|
+| `projectPath` | string | all projects |
+
+---
+
+### `list_bi_replicas`
+Show all running local replicas — instance ID, PID, consumer group, uptime, status, and a tail of recent log output. No arguments required.
+
+---
+
+### `inspect_consumer_group`
+Show the Kafka consumer group state: partition assignment, current offset, log-end offset, and lag per partition. Works for both local and containerized replicas.
+
+| Argument | Type | Required |
+|----------|------|---------|
+| `groupId` | string | **required** |
+| `kafkaComposePath` | string | bundled |
+
+---
+
+### `build_bi_docker_image`
+Build a Docker image from the Ballerina project. Steps: `bal build` → auto-generate `Dockerfile` (eclipse-temurin:21-jre base) → `docker build`.
+
+| Argument | Type | Default |
+|----------|------|---------|
+| `projectPath` | string | auto-detected |
+| `imageName` | string | `bi-kafka-demo` |
+| `tag` | string | `latest` |
+
+---
+
+### `generate_bi_docker_compose`
+Generate a `docker-compose.bi.yml` for the BI service. The service joins the `kafka-local` Docker network and uses `kafka:9093` as the bootstrap server. Consumer group ID, topics, and image name are read from `config.bal` by default.
+
+| Argument | Type | Default |
+|----------|------|---------|
+| `projectPath` | string | auto-detected |
+| `imageName` | string | `bi-kafka-demo` |
+| `tag` | string | `latest` |
+| `groupId` | string | from `config.bal` |
+| `inputTopic` | string | from `config.bal` |
+| `outputTopic` | string | from `config.bal` |
+| `outputComposeFile` | string | `docker-compose.bi.yml` |
+
+---
+
+### `start_bi_replicas_containerized`
+Start N Docker container replicas of the BI listener. Requires Kafka to be running and the Docker image to be built.
+
+| Argument | Type | Default |
+|----------|------|---------|
+| `projectPath` | string | auto-detected |
+| `composeFile` | string | `docker-compose.bi.yml` |
+| `replicas` | number | `2` |
+| `kafkaComposePath` | string | bundled |
+
+---
+
+### `stop_bi_replicas_containerized`
+Stop and remove all containerized BI replicas. Kafka broker and topics are not affected.
+
+| Argument | Type | Default |
+|----------|------|---------|
+| `projectPath` | string | auto-detected |
+| `composeFile` | string | `docker-compose.bi.yml` |
+
+---
+
+### `scale_bi_replicas`
+Scale the number of running containers up or down. Kafka rebalances partitions automatically. Set `replicas: 0` to stop all without removing the compose file.
+
+| Argument | Type | Required | Default |
+|----------|------|---------|---------|
+| `replicas` | number | **required** | — |
+| `projectPath` | string | | auto-detected |
+| `composeFile` | string | | `docker-compose.bi.yml` |
+| `kafkaComposePath` | string | | bundled |
+
+---
+
+### Example prompts for multi-replica deployment
+
+```
+"Start 3 local BI replicas sharing the same consumer group."
+
+"Show me the running replicas and their status."
+
+"Show the Kafka partition assignment across my replicas."
+
+"Stop replica bi-replica-1234567890."
+
+"Stop all local BI replicas."
+
+"Build a Docker image from my BI project."
+
+"Generate the Docker Compose file for the BI service."
+
+"Start 4 containerized BI replicas."
+
+"Scale down to 2 replicas."
+
+"Stop all containerized BI replicas."
+```
+
+---
+
 ## Project structure
 
 ```
 wso2-bi-kafka-mcp-server/
+├── fixtures/
+│   └── error-flows/
+│       ├── invalid-json.txt               # Malformed JSON fixture
+│       ├── schema-missing-field.json      # Valid JSON, missing required fields
+│       ├── schema-wrong-type.json         # Valid JSON, wrong field types
+│       ├── business-invalid-amount.json   # Valid JSON, negative amount
+│       └── valid-order.json               # Baseline valid OrderEvent
 ├── resources/
 │   └── docker/
 │       └── docker-compose.yml     # Bundled Kafka stack (KRaft, no ZooKeeper)
 ├── src/
 │   ├── index.ts                   # MCP server entry point — tool registry + stdio transport
 │   ├── config.ts                  # Path defaults, smart WSO2I detection, constants
-│   ├── types.ts                   # Shared TypeScript types
+│   ├── types.ts                   # Shared TypeScript types (incl. ErrorFlowResult, ReplicaInfo)
 │   ├── tools/
 │   │   ├── prerequisites.ts       # check_prerequisites (with env layout block)
 │   │   ├── setup.ts               # setup_kafka_and_bi, run_bi_demo
 │   │   ├── kafka.ts               # start_kafka, stop_kafka, kafka_status, show_kafka_logs
 │   │   ├── kafka-admin.ts         # list_topics, create_topic
 │   │   ├── kafka-messages.ts      # produce_test_message, consume_test_message
-│   │   └── bi.ts                  # validate_bi_project, run_bi_project,
-│   │                              #   inspect_bi_kafka_config, generate_bi_kafka_sample
+│   │   ├── bi.ts                  # validate_bi_project, run_bi_project,
+│   │   │                          #   inspect_bi_kafka_config, generate_bi_kafka_sample
+│   │   ├── error-flows.ts         # 10 erroneous-flow tools
+│   │   ├── replica-manager.ts     # 5 local process replica tools
+│   │   └── containerized.ts       # 5 Docker-based replica tools
 │   └── utils/
-│       ├── docker.ts              # Docker / Compose CLI wrappers (no shell injection)
+│       ├── docker.ts              # Docker / Compose CLI wrappers + spawnBackground()
 │       ├── logger.ts              # Emoji-formatted output helpers
-│       └── validation.ts          # Input validation and secret masking
+│       ├── validation.ts          # Input validation and secret masking
+│       ├── log-patterns.ts        # Pure-function error pattern detection utilities
+│       └── log-patterns.test.ts   # Vitest unit tests for log-patterns
 ├── dist/                          # Compiled JavaScript (git-ignored)
 ├── package.json
 ├── tsconfig.json
@@ -583,6 +942,9 @@ npm run dev
 # Rebuild after changes
 npm run build
 
+# Run unit tests (pure-function utilities, no Docker or Ballerina required)
+npm test
+
 # Clean compiled output and rebuild
 npm run clean && npm run build
 ```
@@ -591,6 +953,7 @@ To add a new tool:
 1. Add the handler function to the appropriate file in `src/tools/`
 2. Register it in `HANDLERS` and `TOOLS` in `src/index.ts`
 3. Run `npm run build`
+4. If you add pure utility functions, add tests to `src/utils/*.test.ts` and run `npm test`
 
 ---
 

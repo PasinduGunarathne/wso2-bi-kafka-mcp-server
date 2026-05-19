@@ -8,6 +8,7 @@ import * as docker from "../utils/docker.js";
 import * as log from "../utils/logger.js";
 import { DEFAULTS, resolveComposeDir, resolveSmartBiProjectPath } from "../config.js";
 import { runPrerequisiteChecks } from "./prerequisites.js";
+import { triggerInvalidJsonError, triggerSchemaMismatchError } from "./error-flows.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -223,7 +224,16 @@ function writeDemoProject(projectPath: string, balVersion: string): string[] {
 export async function setupKafkaAndBi(args: {
   projectPath?: string;
   kafkaComposePath?: string;
+  deploymentMode?: "standalone" | "local-replicas" | "containerized";
+  includeNegativeTests?: boolean;
 }): Promise<string> {
+  // ── Gate: if no deployment mode chosen, show the picker and stop ─────────
+  if (!args.deploymentMode) {
+    return deploymentModeTable() +
+      "\n\nPlease choose a deployment mode and call setup_kafka_and_bi again with " +
+      "deploymentMode set to one of: \"standalone\", \"local-replicas\", or \"containerized\".";
+  }
+
   const composeDir  = resolveComposeDir(args.kafkaComposePath);
   const projectPath = args.projectPath?.trim() || defaultProjectPath();
   const TOTAL       = 7;
@@ -390,12 +400,40 @@ export async function setupKafkaAndBi(args: {
     "Input topic     : " + DEMO_INPUT_TOPIC,
     "Output topic    : " + DEMO_OUTPUT_TOPIC,
     "BI project      : " + projectPath,
+    "Deployment mode : " + args.deploymentMode,
   ]));
   lines.push("");
-  lines.push(log.done(
-    "Everything is ready. " +
-    "Call run_bi_demo to execute the end-to-end sample flow.",
-  ));
+
+  // Mode-specific next steps
+  switch (args.deploymentMode) {
+    case "standalone":
+      lines.push(log.done("Everything is ready."));
+      lines.push("");
+      lines.push(log.info("Next step:  run_bi_demo"));
+      lines.push("  Produces a test order, starts the listener, and verifies the result.");
+      break;
+
+    case "local-replicas":
+      lines.push(log.done("Kafka and the BI project are ready."));
+      lines.push("");
+      lines.push(log.info("Next steps for local multi-replica mode:"));
+      lines.push("  1.  start_bi_replica { groupId: \"order-processor\" }  — start replica 1");
+      lines.push("  2.  start_bi_replica { groupId: \"order-processor\" }  — start replica 2");
+      lines.push("  3.  list_bi_replicas                                  — confirm both running");
+      lines.push("  4.  inspect_consumer_group { groupId: \"order-processor\" }  — see partition split");
+      lines.push("  5.  produce_test_message { topicName: \"bi.orders.in\" }");
+      break;
+
+    case "containerized":
+      lines.push(log.done("Kafka and the BI project are ready."));
+      lines.push("");
+      lines.push(log.info("Next steps for containerized mode:"));
+      lines.push("  1.  build_bi_docker_image               — compile + build Docker image (~2 min)");
+      lines.push("  2.  generate_bi_docker_compose          — write docker-compose.bi.yml");
+      lines.push("  3.  start_bi_replicas_containerized { replicas: 3 }");
+      lines.push("  4.  inspect_consumer_group { groupId: \"order-processor\" }");
+      break;
+  }
 
   return lines.join("\n");
 }
@@ -405,6 +443,7 @@ export async function setupKafkaAndBi(args: {
 export async function runBiDemo(args: {
   projectPath?: string;
   kafkaComposePath?: string;
+  includeNegativeTests?: boolean;
 }): Promise<string> {
   const composeDir  = resolveComposeDir(args.kafkaComposePath);
   const projectPath = args.projectPath?.trim() || defaultProjectPath();
@@ -578,6 +617,233 @@ export async function runBiDemo(args: {
   lines.push("  • Run validate_bi_project any time to check for compile errors.");
   lines.push("  • Use produce_test_message / consume_test_message for ad-hoc testing.");
   lines.push("  • Open Kafka UI at " + DEFAULTS.KAFKA_UI_URL + " to inspect topics and messages.");
+  lines.push("  • Run run_error_flow_suite to test error handling and failure scenarios.");
+
+  // ── Optional negative tests ────────────────────────────────────────────────
+  if (args.includeNegativeTests) {
+    lines.push("");
+    lines.push("─".repeat(60));
+    lines.push(log.header("Negative Test Flows (includeNegativeTests: true)"));
+
+    try {
+      lines.push("");
+      lines.push(log.run("Running: Invalid JSON test…"));
+      const invalidResult = await triggerInvalidJsonError({
+        topicName: DEMO_INPUT_TOPIC,
+        kafkaComposePath: args.kafkaComposePath,
+        projectPath: args.projectPath,
+      });
+      lines.push(invalidResult);
+    } catch (e: any) {
+      lines.push(log.warn(`Invalid JSON test skipped: ${e.message}`));
+    }
+
+    try {
+      lines.push("");
+      lines.push(log.run("Running: Schema mismatch test (missing field)…"));
+      const schemaResult = await triggerSchemaMismatchError({
+        variant: "missing-field",
+        topicName: DEMO_INPUT_TOPIC,
+        kafkaComposePath: args.kafkaComposePath,
+        projectPath: args.projectPath,
+      });
+      lines.push(schemaResult);
+    } catch (e: any) {
+      lines.push(log.warn(`Schema mismatch test skipped: ${e.message}`));
+    }
+
+    lines.push("");
+    lines.push(log.done("Negative tests complete."));
+    lines.push(log.info("Run run_error_flow_suite for a full error-flow report."));
+  }
+
+  return lines.join("\n");
+}
+
+// ── choose_deployment_mode ────────────────────────────────────────────────────
+
+type DeploymentMode = "standalone" | "local-replicas" | "containerized";
+
+interface ChooseDeploymentModeArgs {
+  mode?: DeploymentMode;
+}
+
+/**
+ * Returns the compact deployment-mode selection table shown at the start of
+ * every setup flow. Reused by both chooseDeploymentMode and setupKafkaAndBi.
+ */
+function deploymentModeTable(): string {
+  const lines: string[] = [];
+  lines.push(log.header("Kafka + Ballerina BI — Choose Your Deployment Mode"));
+  lines.push("");
+  lines.push("Here are the three deployment options:");
+  lines.push("");
+
+  // Table widths: Mode=25, Best For=62, Docker=18
+  const W = [25, 62, 18];
+  const hr = `├${"─".repeat(W[0] + 2)}┼${"─".repeat(W[1] + 2)}┼${"─".repeat(W[2] + 2)}┤`;
+  const top = `┌${"─".repeat(W[0] + 2)}┬${"─".repeat(W[1] + 2)}┬${"─".repeat(W[2] + 2)}┐`;
+  const bot = `└${"─".repeat(W[0] + 2)}┴${"─".repeat(W[1] + 2)}┴${"─".repeat(W[2] + 2)}┘`;
+
+  const cell = (s: string, w: number) => ` ${s.padEnd(w)} `;
+
+  lines.push(top);
+  lines.push(`│${cell("Mode", W[0])}│${cell("Best For", W[1])}│${cell("Docker Image?", W[2])}│`);
+  lines.push(hr);
+  lines.push(`│${cell("1 — Standalone", W[0])}│${cell("First-time setup, development, demos", W[1])}│${cell("No", W[2])}│`);
+  lines.push(hr);
+  lines.push(`│${cell("2 — Local multi-replica", W[0])}│${cell("Testing consumer-group behaviour across multiple processes", W[1])}│${cell("No", W[2])}│`);
+  lines.push(hr);
+  lines.push(`│${cell("3 — Containerized", W[0])}│${cell("Production-like validation, replicas that survive restarts", W[1])}│${cell("Yes (~2 min once)", W[2])}│`);
+  lines.push(bot);
+
+  lines.push("");
+  lines.push("Which mode would you like to use?");
+  lines.push("  1 → setup_kafka_and_bi { deploymentMode: \"standalone\" }");
+  lines.push("  2 → setup_kafka_and_bi { deploymentMode: \"local-replicas\" }");
+  lines.push("  3 → setup_kafka_and_bi { deploymentMode: \"containerized\" }");
+
+  return lines.join("\n");
+}
+
+/**
+ * Deployment mode wizard.
+ *
+ * Called with no arguments  → returns the compact comparison table.
+ * Called with mode="..."    → returns the exact ordered tool-call guide for
+ *   that mode, ready to present to the user.
+ */
+export async function chooseDeploymentMode(args: ChooseDeploymentModeArgs): Promise<string> {
+  if (args.mode) {
+    return modeGuide(args.mode);
+  }
+  return deploymentModeTable();
+}
+
+function modeGuide(mode: DeploymentMode): string {
+  const lines: string[] = [];
+
+  switch (mode) {
+
+    // ── Standalone ──────────────────────────────────────────────────────────
+    case "standalone": {
+      lines.push(log.header("Mode 1 · Standalone Setup Guide"));
+      lines.push("");
+      lines.push("A single Kafka broker + a single Ballerina BI listener.");
+      lines.push("The fastest way to get a working producer/consumer flow.");
+      lines.push("");
+      lines.push(log.info("Step-by-step:"));
+      lines.push("");
+      lines.push("  1.  check_prerequisites");
+      lines.push("      Verify Docker, Ballerina, and port availability.");
+      lines.push("");
+      lines.push("  2.  setup_kafka_and_bi");
+      lines.push("      Starts Kafka, creates topics, generates the BI project, and compiles it.");
+      lines.push("      (All in one command — nothing else needed for setup.)");
+      lines.push("");
+      lines.push("  3.  run_bi_demo");
+      lines.push("      Produces a test order, runs the listener for 25s, and verifies");
+      lines.push("      the processed result appears on the output topic.");
+      lines.push("");
+      lines.push("  4.  (Optional) inspect_bi_kafka_config");
+      lines.push("      Inspect the generated Ballerina configuration.");
+      lines.push("");
+      lines.push("  5.  (Optional) run_error_flow_suite");
+      lines.push("      Run error-handling and failure scenario tests.");
+      lines.push("");
+      lines.push("  6.  stop_kafka  — when you're done for the day.");
+      lines.push("");
+      lines.push(log.ok("Start here:  check_prerequisites"));
+      break;
+    }
+
+    // ── Local replicas ──────────────────────────────────────────────────────
+    case "local-replicas": {
+      lines.push(log.header("Mode 2 · Local Multi-Replica Setup Guide"));
+      lines.push("");
+      lines.push("Multiple `bal run` processes on the host, sharing a Kafka consumer group.");
+      lines.push("Kafka automatically distributes partitions across them.");
+      lines.push("");
+      lines.push(log.info("Step-by-step:"));
+      lines.push("");
+      lines.push("  1.  check_prerequisites");
+      lines.push("      Verify Docker, Ballerina, and port availability.");
+      lines.push("");
+      lines.push("  2.  setup_kafka_and_bi");
+      lines.push("      Starts Kafka, creates topics, generates and compiles the BI project.");
+      lines.push("");
+      lines.push("  3.  start_bi_replica { groupId: \"order-processor\" }");
+      lines.push("      Start replica 1.");
+      lines.push("");
+      lines.push("  4.  start_bi_replica { groupId: \"order-processor\" }");
+      lines.push("      Start replica 2. Repeat for as many replicas as you need.");
+      lines.push("      (Kafka rebalances partitions automatically on each addition.)");
+      lines.push("");
+      lines.push("  5.  list_bi_replicas");
+      lines.push("      Confirm all replicas are running.");
+      lines.push("");
+      lines.push("  6.  inspect_consumer_group { groupId: \"order-processor\" }");
+      lines.push("      See how Kafka distributed partitions across replicas.");
+      lines.push("");
+      lines.push("  7.  produce_test_message { topicName: \"bi.orders.in\" }");
+      lines.push("      Send a test message and watch which replica picks it up.");
+      lines.push("");
+      lines.push("  8.  stop_all_bi_replicas   (when done)");
+      lines.push("  9.  stop_kafka             (when done)");
+      lines.push("");
+      lines.push(log.info("Tip: stop_bi_replica { instanceId: \"...\" } stops one replica at a time."));
+      lines.push(log.info("     Use list_bi_replicas to find instance IDs."));
+      lines.push("");
+      lines.push(log.ok("Start here:  check_prerequisites"));
+      break;
+    }
+
+    // ── Containerized ───────────────────────────────────────────────────────
+    case "containerized": {
+      lines.push(log.header("Mode 3 · Containerized Multi-Replica Setup Guide"));
+      lines.push("");
+      lines.push("N Docker containers sharing the Kafka network and consumer group.");
+      lines.push("Most production-like option — replicas survive MCP server restarts.");
+      lines.push("");
+      lines.push(log.info("Step-by-step:"));
+      lines.push("");
+      lines.push("  1.  check_prerequisites");
+      lines.push("      Verify Docker, Ballerina, and port availability.");
+      lines.push("");
+      lines.push("  2.  setup_kafka_and_bi");
+      lines.push("      Starts Kafka, creates topics, generates and compiles the BI project.");
+      lines.push("");
+      lines.push("  3.  build_bi_docker_image");
+      lines.push("      Compiles the project, auto-generates a Dockerfile, and runs docker build.");
+      lines.push("      One-time step (~2 min). Only repeat when source code changes.");
+      lines.push("");
+      lines.push("  4.  generate_bi_docker_compose");
+      lines.push("      Writes docker-compose.bi.yml — configures the BI service to join");
+      lines.push("      the kafka-local network and use kafka:9093 as the broker.");
+      lines.push("      Only needed once (or when config changes).");
+      lines.push("");
+      lines.push("  5.  start_bi_replicas_containerized { replicas: 3 }");
+      lines.push("      Start N containers. All join the same consumer group.");
+      lines.push("      Kafka distributes partitions across them automatically.");
+      lines.push("");
+      lines.push("  6.  inspect_consumer_group { groupId: \"order-processor\" }");
+      lines.push("      See partition assignment across containers.");
+      lines.push("");
+      lines.push("  7.  produce_test_message { topicName: \"bi.orders.in\" }");
+      lines.push("      Send a test message and observe which container processes it.");
+      lines.push("");
+      lines.push("  8.  scale_bi_replicas { replicas: 2 }  (optional)");
+      lines.push("      Scale down and watch Kafka rebalance partitions.");
+      lines.push("");
+      lines.push("  9.  stop_bi_replicas_containerized  (when done)");
+      lines.push(" 10.  stop_kafka                       (when done)");
+      lines.push("");
+      lines.push(log.info("Tip: run_error_flow_suite works with any deployment mode."));
+      lines.push("");
+      lines.push(log.ok("Start here:  check_prerequisites"));
+      break;
+    }
+  }
 
   return lines.join("\n");
 }

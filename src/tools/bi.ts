@@ -8,6 +8,7 @@ import * as docker from "../utils/docker.js";
 import * as log from "../utils/logger.js";
 import { requireString, optionalString, maskSecret } from "../utils/validation.js";
 import { DEFAULTS, resolveBiProjectPath } from "../config.js";
+import { detectCommitBehavior, detectDlqConfig, extractConfigurableDefault } from "../utils/log-patterns.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -246,6 +247,51 @@ export async function inspectBiKafkaConfig(args: { biProjectPath?: string }): Pr
 
   lines.push("");
   lines.push(log.info("Override values using Config.toml or -C flags: bal run -C kafkaTopic=my-topic"));
+
+  // ── Commit behaviour ──────────────────────────────────────────────────────
+  lines.push("");
+  lines.push("Commit Behaviour:");
+  lines.push("─".repeat(64));
+
+  const allBalSources: string[] = [];
+  const allBalFiles = fs.existsSync(biPath)
+    ? fs.readdirSync(biPath).filter((f) => f.endsWith(".bal"))
+    : [];
+  for (const f of allBalFiles) {
+    try { allBalSources.push(fs.readFileSync(path.join(biPath, f), "utf8")); } catch { /* skip */ }
+  }
+  const mainSrc = allBalSources.find((s) => s.includes("onConsumerRecord")) ?? allBalSources.join("\n");
+  const commit  = detectCommitBehavior(mainSrc);
+
+  lines.push(`  autoCommit disabled : ${commit.autoCommitDisabled ? "✅ Yes (autoCommit: false)" : "⚠️  Not detected"}`);
+  lines.push(`  manual commit       : ${commit.hasManualCommit ? "✅ Yes (caller->commit())" : "⚠️  Not found"}`);
+  lines.push(`  commit position     : ${
+    commit.commitInsideLoop ? "Inside foreach loop (each message commits individually)" :
+    commit.commitAfterLoop  ? "After foreach loop (batch-level commit — always runs)" :
+    "Could not determine"
+  }`);
+
+  if (commit.commitAfterLoop && commit.hasManualCommit) {
+    lines.push("");
+    lines.push("  ⚠️  Batch commit after loop: offsets are committed even when individual");
+    lines.push("     messages fail. Failed messages will NOT be re-delivered.");
+    lines.push("     This is 'log-and-continue' behaviour.");
+  }
+
+  // ── DLQ detection ─────────────────────────────────────────────────────────
+  lines.push("─".repeat(64));
+  lines.push("");
+  lines.push("Dead-Letter Queue (DLQ):");
+  lines.push("─".repeat(64));
+  const dlqVar = detectDlqConfig(allBalSources);
+  if (dlqVar) {
+    const dlqDefault = extractConfigurableDefault(allBalSources, dlqVar);
+    lines.push(`  ✅  DLQ variable detected : ${dlqVar}${dlqDefault ? ` (default: "${dlqDefault}")` : ""}`);
+  } else {
+    lines.push("  ℹ️   No DLQ configured in this project.");
+    lines.push("     Run check_dlq for full details and implementation guidance.");
+  }
+  lines.push("─".repeat(64));
 
   return lines.join("\n");
 }

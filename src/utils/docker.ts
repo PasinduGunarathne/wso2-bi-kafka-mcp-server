@@ -5,6 +5,7 @@
 import os from "os";
 import path from "path";
 import { execa, ExecaError } from "execa";
+import type { Subprocess } from "execa";
 import * as log from "./logger.js";
 
 /**
@@ -239,6 +240,30 @@ export async function resolveContainerName(
     }
   }
   return null;
+}
+
+/**
+ * Spawn a long-running background process and return its handle immediately
+ * (not awaited). The caller stores the ExecaChildProcess and calls .kill()
+ * when it wants to stop the process.
+ *
+ * Uses the same extended PATH as run() so `bal`, `docker`, etc. are found
+ * on all platforms. cleanup:true ensures the child is killed when the MCP
+ * server process exits (no zombie processes).
+ */
+export function spawnBackground(
+  cmd: string,
+  args: string[],
+  cwd?: string,
+  extraEnv?: Record<string, string>,
+): Subprocess {
+  return execa(cmd, args, {
+    cwd:     cwd ?? undefined,
+    env:     { PATH: extendedPath(), ...(extraEnv ?? {}) },
+    reject:  false,   // never throws — errors surface via exit events
+    cleanup: true,    // killed automatically when the parent process exits
+    all:     true,    // merge stdout+stderr into .all stream
+  });
 }
 
 export function sleep(ms: number): Promise<void> {
