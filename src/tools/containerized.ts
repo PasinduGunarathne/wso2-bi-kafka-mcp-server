@@ -176,7 +176,7 @@ export async function generateBiDockerCompose(args: GenerateBiDockerComposeArgs)
   // Read defaults from config.bal
   const sources   = readBalSources(biPath);
   const groupId   = args.groupId    ?? extractConfigurableDefault(sources, "kafkaGroupId")    ?? "order-processor";
-  const input     = args.inputTopic ?? extractConfigurableDefault(sources, "kafkaTopic")      ?? "bi.orders.in";
+  const input     = args.inputTopic ?? extractConfigurableDefault(sources, "inputTopic")       ?? "bi.orders.in";
   const output    = args.outputTopic?? extractConfigurableDefault(sources, "outputTopic")     ?? "bi.orders.out";
 
   lines.push(log.info(`Project path : ${biPath}`));
@@ -205,7 +205,7 @@ services:
       - "--"
       - "-CkafkaBootstrapServers=${DEFAULTS.KAFKA_BOOTSTRAP_INTERNAL}"
       - "-CkafkaGroupId=${groupId}"
-      - "-CkafkaTopic=${input}"
+      - "-CinputTopic=${input}"
       - "-CoutputTopic=${output}"
     restart: unless-stopped
     networks:
